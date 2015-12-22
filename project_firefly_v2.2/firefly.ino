@@ -3,34 +3,14 @@
 #include <pfatfs.h>
 #include <pffconf.h>
 
-//#include<Wire.h>
-
-//#include <I2cMaster.h>
-
-//#include <I2Cdev.h>
-//#include <Wire.h>
-//#include <helper_3dmath.h>
-//#include <MPU6050.h>
-
 #define SCL_PIN 14
 #define SDA_PIN 15
 
 bool LED_active = false;
 SWI2C myI2C;    // instanciate softwareI2C class
 
-// variables 
-uint8_t Ack=1;
-
-//SoftI2cMaster rtc(SDA_PIN, SCL_PIN);
-
 const int MPU_addr=0xD2;  // I2C address of the MPU-6050 69
-//const int MPU_addr=0xD0;  // I2C address of the MPU-6050 68
 uint16_t AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
-
-//MPU6050 accelgyro;
-
-//int16_t ax, ay, az;
-//int16_t gx, gy, gz;
 
 /*----------------------------------------------------------------------*/
 /* Petit FatFs sample project for generic uC  (C)ChaN, 2010             */
@@ -48,6 +28,8 @@ uint16_t AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
  
    This project was later modified by Nick Felker, Elijah Neville, and Mike McCaffrey
    The system now uses a variety of sensors and writes them to a predefined CSV file
+   
+   This code was futher modified by Christopher Frederickson, Rich Sbresney, and Andrew Getler.
  */
 #include "SPI.h" 
 #include "pfatfs.h"
@@ -55,7 +37,6 @@ uint16_t AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
 #define cs_pin      5             // chip select pin P1.5
 #define read_buffer 128             // size (in bytes) of read buffer
 #define LED 11
-//#define LED 14
 
 //GO HERE TO SET CONFIGURATION VARIABLES
 int WRITE_SPEED = 20; //How many milliseconds should be used between writes? (1000Hz is the max thereotical speed, but it's more like 25Hz with write delays)
@@ -81,77 +62,40 @@ uint32_t lastWrite = 0;
 boolean SDError = false; //Used for asynchronous operations, can inform if there's a problem with the SD card
 
 void setup() {
+  
+  lastWrite = millis(); //We keep storing the lastWrite time for asynchronous SD writing
+    pinMode(LED, OUTPUT); //Initilize the LED as an ouput
+    digitalWrite(LED,HIGH);
+  
+  //MPU6050 Initilization Routine
   delay(1000);
   myI2C.i2cStart();
   delayMicroseconds(10);
   myI2C.i2cWrite(MPU_addr | 0);
   delayMicroseconds(10);
-  myI2C.i2cWrite(0x6B); //0x3B
+  myI2C.i2cWrite(0x6B);
   delayMicroseconds(10);
-  myI2C.i2cWrite(0);   // 0b10000000  sensor addres + read attempt
+  myI2C.i2cWrite(0); 
   delayMicroseconds(10);
-  myI2C.i2cStop();        // end I2C transmission
+  myI2C.i2cStop();
   delay(1000);
-  
-  //myI2C.begin();
-  //myI2C.i2cWrite(MPU_addr | 0);
-  //myI2C.i2cWrite(0x6B);
-  //myI2C.i2cWrite(0);
-  //myI2C.i2cStop();        // end I2C transmission
-  
-  
-  //Wire.begin();
-  //Wire.beginTransmission(MPU_addr);
-  //Wire.write(0x6B);  // PWR_MGMT_1 register
-  //Wire.write(0);     // set to zero (wakes up the MPU-6050)
-  //Wire.endTransmission(true);
-  
-  /*
-  if (rtc.start(MPU_addr | I2C_WRITE)) {
-      rtc.write(0x6B); // PWR_MGMT_1 register
-      rtc.write(0); // set to zero (wakes up the MPU-6050)
-    }
-    rtc.stop();
-  */
-    //Serial.begin(4800);                // initialize the //Serial terminal
-    //Serial.println("Loading...");
-    lastWrite = millis(); //We keep storing the lastWrite time for asynchronous SD writing
-    
-    //Wire.begin();
-    //accelgyro.initialize();
-    
-    analogReference(INTERNAL1V5);
-    analogRead(TEMPSENSOR);           // first reading usually wrong
-    FatFs.begin(cs_pin, 3);              // initialize FatFS library calls
-    // initialize the digital pin as an output.
-    pinMode(LED, OUTPUT);     
-    //Serial.println("**********\r\n MSP430 Temperature Logger \n\r**********\n\r\n\r");
+
+  FatFs.begin(cs_pin, 3); // initialize FatFS library calls
+
 }
 void loop() {
   if(millis() - lastWrite > WRITE_SPEED) { //Write only so often, but check in a non-blocking way
     lastWrite = millis();
     write();
-    digitalWrite(LED,HIGH);
   }
 }
          
 /* Print dying message. This may stop program execution. */    
 void die(int pff_err) {
-  //Serial.print("Failed with rc=");
-  //Serial.print(pff_err,DEC);
-    /*digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(250);               // wait for a second
-    digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-    delay(250);               // wait for a second
-    digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(250);               // wait for a second
-    digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-    delay(1000);               // wait for a second*/
   SDError = true;
   if(stopExecutionIfSDError) {
     for (;;) ; //Endless loop that prevents the system from returning to normal operation
   } else {    
-    //Serial.println(" but we keep going"); 
     delay(50);
     //Try to reset the FatFs object
     FatFs.begin(cs_pin, 3); 
@@ -163,95 +107,55 @@ void die(int pff_err) {
 /* Program Main                                                          */
 /*-----------------------------------------------------------------------*/
 void write() {
-  //Grab our sensors data
+  //Grab our sensors data via burst transaction
+  //All data is 2 bytes long and sent in 1 byte increments with the MSByte first
+  //Short delays are perhaps unnecessary, but helped with the I2C debugger
   myI2C.i2cStart();
   delayMicroseconds(10);
   myI2C.i2cWrite(MPU_addr | 0);
   delayMicroseconds(10);
-  myI2C.i2cWrite(0x42); //0x3B
+  myI2C.i2cWrite(0x42);
   delayMicroseconds(10);
   myI2C.i2cStart();
   delayMicroseconds(10);
-  myI2C.i2cWrite(MPU_addr | 1);   // 0b10000000  sensor addres + read attempt
+  myI2C.i2cWrite(MPU_addr | 1);
   delayMicroseconds(10);
-  AcX = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  AcX = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   AcX = AcX | myI2C.i2cRead(1);
   delayMicroseconds(10);
-  AcY = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  AcY = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   AcY= AcY | myI2C.i2cRead(1);
   delayMicroseconds(10);
-  AcZ = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  AcZ = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   AcZ = AcZ | myI2C.i2cRead(1);
   delayMicroseconds(10);
-  Tmp = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  Tmp = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   Tmp = Tmp | myI2C.i2cRead(1);
   delayMicroseconds(10);
-  GyX = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  GyX = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   GyX = GyX | myI2C.i2cRead(1);
   delayMicroseconds(10);
-  GyY = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  GyY = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   GyY = GyY | myI2C.i2cRead(1);
   delayMicroseconds(10);
-  GyZ = myI2C.i2cRead(1)<<8;  // get meas value MSByte
+  GyZ = myI2C.i2cRead(1)<<8;
   delayMicroseconds(10);
   GyZ = GyZ | myI2C.i2cRead(0);
   delayMicroseconds(10);
-  myI2C.i2cStop();        // end I2C transmission
-  //accelgyro.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-  /*
-    if (rtc.start(MPU_addr | I2C_WRITE)) {
-      rtc.write(0x3C); // PWR_MGMT_1 register
-    }
-    if (rtc.start(MPU_addr | I2C_READ)) {
-      AcX = rtc.read(true); // PWR_MGMT_1 register
-    }
-    rtc.stop();
-    */
-  /*
-  Wire.beginTransmission(MPU_addr);
-  Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU_addr,14,true);  // request a total of 14 registers
-  AcX=myI2C.i2cRead(1)<<8|  ();  // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)    
-  AcY=Wire.read()<<8|Wire.read();  // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
-  AcZ=Wire.read()<<8|Wire.read();  // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
-  Tmp=Wire.read()<<8|Wire.read();  // 0x41 (TEMP_OUT_H) & 0x42 (TEMP_OUT_L)
-  GyX=Wire.read()<<8|Wire.read();  // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
-  GyY=Wire.read()<<8|Wire.read();  // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
-  GyZ=Wire.read()<<8|Wire.read();  // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
-  */
+  myI2C.i2cStop();
   
-  //GO HERE TO DECLARE YOUR SENSORS
-   uint32_t temp = ((uint32_t)analogRead(TEMPSENSOR)*27069 - 18169625) *10 >> 16; //Formula to temp sensor voltage to Celcius
-   uint32_t barometer = ((uint32_t) 3); //We can read from all kinds of sensors here
-   //Serial.println();
-   //Serial.println("Opening log file to write data.");
    delay(20);
    
    SDError = false; //We'll be optimisitc and then change if there's still a problem
    rc = FatFs.open(filename.c_str()); //Open a file at the given filename
    if (rc){
      die(rc); //We may get an SD card error here. Let's not try to write if we cannot.
-     
-    /*digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(100);               // wait for a second
-    digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-    delay(100);               // wait for a second
-    digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(100);               // wait for a second
-    digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-    delay(100);               // wait for a second
-    digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(100);               // wait for a second
-    digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-    delay(1000);               // wait for a second*/
-    
    }
 
    if(!SDError || continueIncrementingIfSDError) {
@@ -259,25 +163,15 @@ void write() {
      bw=0;
      //GO HERE IF YOU WANT TO CHANGE THE FILE OUTPUT
      //To insert a long, use  %lu (lowercase L), %s for a string of characters
-     
-     
-     //sprintf(buf, "%lu,%lu.%lu,%lu\r\n", counter, temp/10, temp%10, barometer); //Write a CSV row to a buffer
+
      sprintf(buf, "%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n", counter, AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ); //Write a CSV row to a buffer
-     
-     
      
      counter++; //Increment the index of the CSV file
      uint8_t StringLength =  strlen(buf); //Grab the buffer
-     //Serial.println(buf);        
-  
-    /*digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(1000);               // wait for a second
-    digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-    delay(1000);               // wait for a second*/
-    
+
      rc = FatFs.lseek(AccStringLength); //Append to your file instead of overwriting
      if (rc) die(rc);
-     AccStringLength =  AccStringLength + 512;
+     AccStringLength =  AccStringLength + 512; //TODO 512 is perhaps unneccessary due to beffer being only 128 bytes
      rc = FatFs.write(buf, StringLength,&bw); //Start writing the buffer
      if (rc) die(rc);
      rc = FatFs.write(0, 0, &bw);  //Finalize write
